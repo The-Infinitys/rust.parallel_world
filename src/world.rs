@@ -55,16 +55,21 @@ impl fmt::Display for WorldStatus {
 /// `R` はこのWorldが返す結果の型です。
 pub struct World<R: Send + 'static> {
     /// 実行する関数（Job）
-    process: Mutex<Option<Box<dyn FnOnce() -> R + Send + 'static>>>,
+    process: WorldProcess<R>,
     /// Worldの現在の状態
     status: Arc<Mutex<WorldStatus>>,
     /// 実行中のスレッドハンドル（Noneは未実行または実行完了/停止）
-    thread_handle: Mutex<Option<JoinHandle<()>>>,
+    thread_handle: WorldThreadHandle,
     /// タスクの実行結果を送信するためのチャネルの送信側。
-    result_sender: Mutex<Option<mpsc::Sender<Result<R, String>>>>,
+    result_sender: WorldResultSender<R>,
     /// タスクの実行結果を受信するためのチャネルの受信側。
-    result_receiver: Arc<Mutex<Option<mpsc::Receiver<Result<R, String>>>>>,
+    result_receiver: WorldResultReceiver<R>,
 }
+
+type WorldProcess<R> = Mutex<Option<Box<dyn FnOnce() -> R + Send + 'static>>>;
+type WorldThreadHandle = Mutex<Option<JoinHandle<()>>>;
+type WorldResultSender<R> = Mutex<Option<mpsc::Sender<Result<R, String>>>>;
+type WorldResultReceiver<R> = Arc<Mutex<Option<mpsc::Receiver<Result<R, String>>>>>;
 
 impl<R: Send + 'static> Default for World<R> {
     fn default() -> Self {
