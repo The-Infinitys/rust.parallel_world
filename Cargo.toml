@@ -1,5 +1,5 @@
 [package]
-name = "paralell_world"
+name = "parallel_world"
 version = "0.1.0"
 edition = "2024"
 

@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "paralell_world"
+name = "parallel_world"
 version = "0.1.0"
