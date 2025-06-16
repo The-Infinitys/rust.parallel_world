@@ -198,6 +198,7 @@ impl<R: Send + 'static> World<R> {
     ///
     /// assert_eq!(world.progress(), WorldStatus::Ready);
     /// assert!(world.start().is_ok());
+    /// sleep(Duration::from_millis(1)); // 状態更新を待つ
     /// assert_eq!(world.progress(), WorldStatus::Running);
     ///
     /// // 既に実行中のWorldを再度開始しようとするとエラー
@@ -208,29 +209,23 @@ impl<R: Send + 'static> World<R> {
     /// ```
     pub fn start(&self) -> Result<(), String> {
         let status_guard = self.status.lock().unwrap();
-        // === ここを変更 ===
         if *status_guard == WorldStatus::Running {
             return Err("World is already running.".to_string());
         }
-        // `matches!` マクロを使用して WorldStatus::Failed(_) をチェック
-        if *status_guard == WorldStatus::Finished || matches!(*status_guard, WorldStatus::Failed(_))
-        {
-            // 完了済みまたは失敗済みのWorldを再実行しようとした場合
+        if *status_guard == WorldStatus::Finished || matches!(*status_guard, WorldStatus::Failed(_)) {
             return Err(
                 "World has already completed or failed and cannot be restarted.".to_string(),
             );
         }
-        // === 変更ここまで ===
 
         let mut process_guard = self.process.lock().unwrap();
-        let process_opt = process_guard.take(); // processの所有権を移動
+        let process_opt = process_guard.take();
 
         if let Some(process_fn) = process_opt {
             let status_clone = Arc::clone(&self.status);
             let result_sender_opt = self.result_sender.lock().unwrap().take();
 
             if result_sender_opt.is_none() {
-                // これは発生しないはずだが、念のため
                 return Err("Internal error: Result sender not available.".to_string());
             }
             let result_sender = result_sender_opt.unwrap();
@@ -238,12 +233,14 @@ impl<R: Send + 'static> World<R> {
             let handle = thread::spawn(move || {
                 let mut s = status_clone.lock().unwrap();
                 *s = WorldStatus::Running;
-                drop(s); // ロックを早期に解放
+                drop(s);
 
                 let result = match std::panic::catch_unwind(AssertUnwindSafe(process_fn)) {
                     Ok(val) => {
                         let mut s = status_clone.lock().unwrap();
-                        *s = WorldStatus::Finished;
+                        if *s != WorldStatus::Stopped { // Stoppedが設定されていなければFinished
+                            *s = WorldStatus::Finished;
+                        }
                         Ok(val)
                     }
                     Err(e) => {
@@ -253,8 +250,7 @@ impl<R: Send + 'static> World<R> {
                         Err(err_msg)
                     }
                 };
-                // 結果をチャネルに送信
-                let _ = result_sender.send(result); // エラーは無視（受信側がドロップされている場合など）
+                let _ = result_sender.send(result);
             });
 
             let mut thread_handle_guard = self.thread_handle.lock().unwrap();
@@ -311,12 +307,10 @@ impl<R: Send + 'static> World<R> {
     /// println!("Attempting to stop the cooperative world...");
     /// *stop_flag.lock().unwrap() = true; // 停止シグナルを送る
     ///
-    /// // ここで `world.stop().unwrap();` を呼ぶとWorldStatusがStoppedになるが、
-    /// // クロージャ自体が停止シグナルをチェックして終了するのが望ましい。
-    /// // status()を呼んで完了を待つ。
+    /// world.stop().unwrap();
     /// let result = world.status();
     /// assert!(result.is_ok()); // 協調的に終了すればOk
-    /// assert_eq!(world.progress(), WorldStatus::Finished); // 協調的に終了したためFinished
+    /// assert_eq!(world.progress(), WorldStatus::Stopped); // 協調的停止によりStopped
     /// ```
     pub fn stop(&self) -> Result<(), String> {
         let mut status_guard = self.status.lock().unwrap();

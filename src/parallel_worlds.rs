@@ -42,7 +42,9 @@ impl ParallelWorlds {
     ///
     /// # 引数
     /// * `id` - 追加するWorldの一意な識別子（String）。
-    /// * `world` - 追加する `World<R>` インスタ
+    /// * `world` - 追加する `World<R>` インスタンス
+    ///
+    /// # 例
     /// ```
     /// use parallel_world::{ParallelWorlds, World};
     ///
@@ -95,6 +97,7 @@ impl ParallelWorlds {
     ///
     /// // 実行中のWorldは削除できない
     /// pw.exec("task_one").unwrap();
+    /// sleep(Duration::from_millis(1)); // 状態更新を待つ
     /// assert!(pw.del("task_one").is_err());
     ///
     /// // 停止または完了後に削除できる
@@ -201,6 +204,7 @@ impl ParallelWorlds {
     /// assert_eq!(pw.progress("my_task").unwrap(), WorldStatus::Ready);
     ///
     /// assert!(pw.exec("my_task").is_ok());
+    /// sleep(Duration::from_millis(1)); // 状態更新を待つ
     /// assert_eq!(pw.progress("my_task").unwrap(), WorldStatus::Running);
     ///
     /// // 既に実行中のWorldを再度開始しようとするとエラー
@@ -244,7 +248,6 @@ impl ParallelWorlds {
     /// let flag_clone = Arc::clone(&stop_flag);
     /// pw.add("my_long_task".to_string(), World::from(move || {
     ///     for i in 0..10 {
-    ///         if *flag_clone.lock().unwrap() { break 0; } // 協調的に停止
     ///         sleep(Duration::from_millis(100)); println!("My long task: {}", i);
     ///     }
     ///     0
@@ -259,10 +262,9 @@ impl ParallelWorlds {
     /// *stop_flag.lock().unwrap() = true; // 停止フラグをセット
     /// pw.kill("my_long_task").unwrap(); // stopを呼び出す
     ///
-    /// sleep(Duration::from_millis(50)); // 状態更新を待つ
-    /// // ここでstoppedになることを期待するが、協調的停止の場合はFinishedになる可能性も
+    /// sleep(Duration::from_millis(150)); // 協調的停止が完了するまで待つ
     /// let status = pw.progress("my_long_task").unwrap();
-    /// assert!(status == WorldStatus::Stopped || status == WorldStatus::Finished);
+    /// assert_eq!(status, WorldStatus::Stopped); // 協調的停止によりStopped
     ///
     /// // 存在しないWorldのkillはエラー
     /// assert!(pw.kill("non_existent_task").is_err());
@@ -291,6 +293,7 @@ impl ParallelWorlds {
     ///
     /// assert_eq!(pw.progress("my_task").unwrap(), WorldStatus::Ready);
     /// pw.exec("my_task").unwrap();
+    /// sleep(Duration::from_millis(1)); // 状態更新を待つ
     /// assert_eq!(pw.progress("my_task").unwrap(), WorldStatus::Running);
     ///
     /// pw.status::<i32>("my_task").unwrap(); // 完了を待つ
