@@ -1,4 +1,4 @@
-use parallel_world::{ParallelWorlds, World};
+use parallel_world::{Multiverse, World};
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
@@ -6,8 +6,8 @@ use std::time::Duration;
 fn main() {
     println!("--- Parallel World Application Start ---");
 
-    // 1. ParallelWorlds インスタンスを作成
-    let pw = ParallelWorlds::new();
+    // 1. Multiverse インスタンスを作成
+    let pw = Multiverse::new();
 
     // 2. 実行するWorld（タスク）を定義し、追加する
 

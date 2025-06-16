@@ -3,38 +3,38 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-/// # ParallelWorlds
+/// # Multiverse
 ///
-/// `ParallelWorlds` は、複数の独立したタスク（`World`インスタンス）を管理し、
+/// `Multiverse` は、複数の独立したタスク（`World`インスタンス）を管理し、
 /// それらを並行して実行するための主要な構造体です。
 ///
 /// Pythonの`threading`モジュールのように、複数のタスクの開始、停止、状態監視を一元的に行えます。
 /// 各`World`は内部的に個別のスレッドで実行されます。
-pub struct ParallelWorlds {
+pub struct Multiverse {
     /// WorldをID（String）で管理するHashMap。
     /// 異なる戻り値の型を持つWorldを管理するため、`AnyWorld`トレイトオブジェクトを使用します。
     worlds: Mutex<HashMap<String, Arc<dyn AnyWorld>>>,
 }
 
-impl ParallelWorlds {
-    /// 新しい空の `ParallelWorlds` インスタンスを生成します。
+impl Multiverse {
+    /// 新しい空の `Multiverse` インスタンスを生成します。
     ///
     /// 最初はどのWorldも含まれていません。`add`メソッドを使用してWorldを追加できます。
     ///
     /// # 例
     /// ```
-    /// use parallel_world::ParallelWorlds;
+    /// use parallel_world::Multiverse;
     ///
-    /// let pw = ParallelWorlds::new();
+    /// let pw = Multiverse::new();
     /// assert!(pw.list().is_empty());
     /// ```
     pub fn new() -> Self {
-        ParallelWorlds {
+        Multiverse {
             worlds: Mutex::new(HashMap::new()),
         }
     }
 
-    /// `ParallelWorlds` に新しい `World` を追加します。
+    /// `Multiverse` に新しい `World` を追加します。
     /// 同じIDのWorldが既に存在する場合はエラーを返します。
     ///
     /// # 型引数
@@ -46,9 +46,9 @@ impl ParallelWorlds {
     ///
     /// # 例
     /// ```
-    /// use parallel_world::{ParallelWorlds, World};
+    /// use parallel_world::{Multiverse, World};
     ///
-    /// let pw = ParallelWorlds::new();
+    /// let pw = Multiverse::new();
     /// let world1 = World::from(|| 1);
     /// let world2 = World::from(|| "hello".to_string());
     ///
@@ -73,7 +73,7 @@ impl ParallelWorlds {
         Ok(())
     }
 
-    /// `ParallelWorlds` から指定されたIDの `World` を削除します。
+    /// `Multiverse` から指定されたIDの `World` を削除します。
     ///
     /// Worldが実行中の場合、削除することはできません。まず `stop_all` または `kill` メソッドで
     /// 停止させる必要があります。
@@ -87,11 +87,11 @@ impl ParallelWorlds {
     ///
     /// # 例
     /// ```
-    /// use parallel_world::{ParallelWorlds, World, WorldStatus};
+    /// use parallel_world::{Multiverse, World, WorldStatus};
     /// use std::thread::sleep;
     /// use std::time::Duration;
     ///
-    /// let pw = ParallelWorlds::new();
+    /// let pw = Multiverse::new();
     /// let world1 = World::from(|| { sleep(Duration::from_millis(100)); 1 });
     /// pw.add("task_one".to_string(), world1).unwrap();
     ///
@@ -124,16 +124,16 @@ impl ParallelWorlds {
         }
     }
 
-    /// `ParallelWorlds` に保存されたWorldのIDのリストを取得します。
+    /// `Multiverse` に保存されたWorldのIDのリストを取得します。
     ///
     /// # 戻り値
     /// 現在登録されているWorldのID（`String`）のベクタ。
     ///
     /// # 例
     /// ```
-    /// use parallel_world::{ParallelWorlds, World};
+    /// use parallel_world::{Multiverse, World};
     ///
-    /// let pw = ParallelWorlds::new();
+    /// let pw = Multiverse::new();
     /// pw.add("alpha".to_string(), World::from(|| ())).unwrap();
     /// pw.add("beta".to_string(), World::from(|| ())).unwrap();
     ///
@@ -145,7 +145,7 @@ impl ParallelWorlds {
         self.worlds.lock().unwrap().keys().cloned().collect()
     }
 
-    /// `ParallelWorlds`からWorldを検索し、`Arc<dyn AnyWorld>`参照を返します。
+    /// `Multiverse`からWorldを検索し、`Arc<dyn AnyWorld>`参照を返します。
     /// 特定の型の戻り値を持つWorldを取得したい場合は、この参照をダウンキャストする必要があります。
     pub fn get(&self, id: &str) -> Option<Arc<dyn AnyWorld>> {
         self.worlds.lock().unwrap().get(id).cloned()
@@ -158,11 +158,11 @@ impl ParallelWorlds {
     ///
     /// # 例
     /// ```
-    /// use parallel_world::{ParallelWorlds, World, WorldStatus};
+    /// use parallel_world::{Multiverse, World, WorldStatus};
     /// use std::thread::sleep;
     /// use std::time::Duration;
     ///
-    /// let pw = ParallelWorlds::new();
+    /// let pw = Multiverse::new();
     /// pw.add("task_a".to_string(), World::from(|| { println!("Task A running..."); sleep(Duration::from_millis(50)); 1 })).unwrap();
     /// pw.add("task_b".to_string(), World::from(|| { println!("Task B running..."); sleep(Duration::from_millis(100)); "done".to_string() })).unwrap();
     ///
@@ -194,11 +194,11 @@ impl ParallelWorlds {
     ///
     /// # 例
     /// ```
-    /// use parallel_world::{ParallelWorlds, World, WorldStatus};
+    /// use parallel_world::{Multiverse, World, WorldStatus};
     /// use std::thread::sleep;
     /// use std::time::Duration;
     ///
-    /// let pw = ParallelWorlds::new();
+    /// let pw = Multiverse::new();
     /// pw.add("my_task".to_string(), World::from(|| { println!("Task running..."); sleep(Duration::from_millis(50)); 42 })).unwrap();
     ///
     /// assert_eq!(pw.progress("my_task").unwrap(), WorldStatus::Ready);
@@ -238,12 +238,12 @@ impl ParallelWorlds {
     ///
     /// # 例
     /// ```
-    /// use parallel_world::{ParallelWorlds, World, WorldStatus};
+    /// use parallel_world::{Multiverse, World, WorldStatus};
     /// use std::thread::sleep;
     /// use std::time::Duration;
     /// use std::sync::{Arc, Mutex};
     ///
-    /// let pw = ParallelWorlds::new();
+    /// let pw = Multiverse::new();
     /// let stop_flag = Arc::new(Mutex::new(false));
     /// let flag_clone = Arc::clone(&stop_flag);
     /// pw.add("my_long_task".to_string(), World::from(move || {
@@ -284,11 +284,11 @@ impl ParallelWorlds {
     ///
     /// # 例
     /// ```
-    /// use parallel_world::{ParallelWorlds, World, WorldStatus};
+    /// use parallel_world::{Multiverse, World, WorldStatus};
     /// use std::thread::sleep;
     /// use std::time::Duration;
     ///
-    /// let pw = ParallelWorlds::new();
+    /// let pw = Multiverse::new();
     /// pw.add("my_task".to_string(), World::from(|| { sleep(Duration::from_millis(20)); 123 })).unwrap();
     ///
     /// assert_eq!(pw.progress("my_task").unwrap(), WorldStatus::Ready);
@@ -338,11 +338,11 @@ impl ParallelWorlds {
     ///
     /// # 例
     /// ```
-    /// use parallel_world::{ParallelWorlds, World};
+    /// use parallel_world::{Multiverse, World};
     /// use std::thread::sleep;
     /// use std::time::Duration;
     ///
-    /// let pw = ParallelWorlds::new();
+    /// let pw = Multiverse::new();
     ///
     /// // 整数を返すタスク
     /// pw.add("sum_task".to_string(), World::from(|| {
@@ -390,7 +390,7 @@ impl ParallelWorlds {
     }
 }
 
-impl Default for ParallelWorlds {
+impl Default for Multiverse {
     fn default() -> Self {
         Self::new()
     }

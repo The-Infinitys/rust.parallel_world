@@ -23,13 +23,13 @@ parallel_world = { path = "../parallel_world" }
 以下は、`parallel_world` を使用した簡単な例です:
 
 ```rust
-use parallel_world::{ParallelWorlds, World};
+use parallel_world::{Multiverse, World};
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
 
 fn main() {
-    let pw = ParallelWorlds::new();
+    let pw = Multiverse::new();
 
     // World A: 成功するタスク
     let world_a = World::from(|| {
@@ -66,15 +66,15 @@ fn main() {
 }
 ```
 
-この例では、2 つの`World`を作成し、`ParallelWorlds`に追加してから、全てを並行して実行します。そして、それぞれの`World`の結果を取得します。
+この例では、2 つの`World`を作成し、`Multiverse`に追加してから、全てを並行して実行します。そして、それぞれの`World`の結果を取得します。
 
 ## API
 
-### ParallelWorlds
+### Multiverse
 
 | メソッド                                                                           | 説明                                                    |
 | ---------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `new() -> Self`                                                                    | 新しい `ParallelWorlds` インスタンスを作成します。      |
+| `new() -> Self`                                                                    | 新しい `Multiverse` インスタンスを作成します。      |
 | `add<R: Send + 'static>(&self, id: String, world: World<R>) -> Result<(), String>` | 新しい `World` を追加します。                           |
 | `del(&self, id: &str) -> Result<(), String>`                                       | 指定された ID の `World` を削除します（実行中は不可）。 |
 | `list(&self) -> Vec<String>`                                                       | 登録されている `World` の ID リストを取得します。       |

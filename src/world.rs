@@ -47,7 +47,7 @@ impl fmt::Display for WorldStatus {
 
 /// # World
 ///
-/// `World` は `ParallelWorlds` クレートで使用されるタスクの基本的な単位です。
+/// `World` は `Multiverse` クレートで使用されるタスクの基本的な単位です。
 ///
 /// 各 `World` は、独立した並行操作を表し、その実行状態を管理します。
 /// ユーザーは実行したい関数（クロージャ）を `World` として定義し、
@@ -416,10 +416,10 @@ impl<R: Send + 'static> World<R> {
 // 特定のR型に対してのみDefaultを実装できる。
 // 例: impl Default for World<()> { ... }
 
-// ------ AnyWorld (ParallelWorldsで異なるR型のWorldを管理するためのトレイト) ------
+// ------ AnyWorld (Multiverseで異なるR型のWorldを管理するためのトレイト) ------
 
 /// 異なる戻り値の型を持つWorldをまとめて管理するためのトレイトです。
-/// `ParallelWorlds` が複数の `World<R>` を型消去して保持するために使用します。
+/// `Multiverse` が複数の `World<R>` を型消去して保持するために使用します。
 pub trait AnyWorld: Send + Sync {
     /// Worldの現在の状態を取得します。
     fn any_progress(&self) -> WorldStatus;
