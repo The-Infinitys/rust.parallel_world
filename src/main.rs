@@ -1,4 +1,4 @@
-use parallel_world::{ParallelWorlds, World, WorldStatus};
+use parallel_world::{ParallelWorlds, World};
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
