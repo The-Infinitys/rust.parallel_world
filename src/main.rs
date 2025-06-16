@@ -39,7 +39,6 @@ fn main() {
         sleep(Duration::from_millis(20));
         panic!("[World C] エラー発生！");
         // unreachable! なので、どんな型でもOKだが型推論のためにダミー値を置く
-        false
     });
     pw.add("World_C".to_string(), world_c)
         .expect("Failed to add World_C");
