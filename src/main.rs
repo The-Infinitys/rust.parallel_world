@@ -1,6 +1,7 @@
-use parallel_world::{ParallelWorlds, World};
+use parallel_world::{ParallelWorlds, World, WorldStatus};
 use std::thread::sleep;
 use std::time::Duration;
+use std::sync::{Arc, Mutex};
 
 fn main() {
     println!("--- Parallel World Application Start ---");
@@ -10,97 +11,126 @@ fn main() {
 
     // 2. 実行するWorld（タスク）を定義し、追加する
 
-    // World A: 成功するタスク
+    // World A: 成功するタスク (引数なし、整数を返す)
     let world_a = World::from(|| {
         println!("[World A] 開始: 50ms 処理します。");
         sleep(Duration::from_millis(50));
         println!("[World A] 完了。");
+        // 戻り値
+        100
     });
-    pw.add("World_A".to_string(), world_a)
-        .expect("Failed to add World_A");
+    pw.add("World_A".to_string(), world_a).expect("Failed to add World_A");
 
-    // World B: 少し長い処理をするタスク
+    // World B: 少し長い処理をするタスク (引数なし、文字列を返す)
     let world_b = World::from(|| {
         println!("[World B] 開始: 100ms 処理します。");
         sleep(Duration::from_millis(100));
         println!("[World B] 完了。");
+        // 戻り値
+        "Hello from World B!".to_string()
     });
-    pw.add("World_B".to_string(), world_b)
-        .expect("Failed to add World_B");
+    pw.add("World_B".to_string(), world_b).expect("Failed to add World_B");
 
-    // World C: 失敗するタスク（パニックを発生させる）
+    // World C: 失敗するタスク（パニックを発生させる、戻り値は仮の型）
     let world_c = World::from(|| {
         println!("[World C] 開始: パニックを発生させます。");
         sleep(Duration::from_millis(20));
         panic!("[World C] エラー発生！");
+        // unreachable! なので、どんな型でもOKだが型推論のためにダミー値を置く
+        false
     });
-    pw.add("World_C".to_string(), world_c)
-        .expect("Failed to add World_C");
+    pw.add("World_C".to_string(), world_c).expect("Failed to add World_C");
+
+    // World E: 引数を取り、それを使って計算するタスク (引数あり、タプルを返す)
+    // クロージャで引数をキャプチャする形式
+    let x = 10;
+    let y = 20;
+    let world_e = World::from(move || { // move キーワードでxとyをキャプチャ
+        println!("[World E] 開始: 引数を使って計算します。 x={}, y={}", x, y);
+        sleep(Duration::from_millis(70));
+        let sum = x + y;
+        let product = x * y;
+        println!("[World E] 完了。");
+        (sum, product) // タプルを返す
+    });
+    pw.add("World_E".to_string(), world_e).expect("Failed to add World_E");
+
 
     println!("\n--- 全てのWorldを実行開始します ---");
-    // 3. 全てのWorldを並行して実行開始
     pw.start_all();
 
-    // 4. 各Worldの実行状況を監視し、完了を待機する
-
-    // World A の状態を確認
+    // World A の完了を待機し、結果を取得 (i32型を期待)
     println!("\n--- World A の状態確認 ---");
     println!("World A の現在の状態: {}", pw.progress("World_A").unwrap());
-    println!("World A の完了を待機中...");
-    match pw.status("World_A") {
-        Ok(_) => println!("World A が正常に完了しました。"),
+    match pw.status::<i32>("World_A") { // status::<i32>でi32型を期待
+        Ok(result) => println!("World A が正常に完了しました。戻り値: {}", result),
         Err(e) => println!("World A の完了中にエラーが発生しました: {}", e),
     }
     println!("World A の最終状態: {}", pw.progress("World_A").unwrap());
 
-    // World B の状態を確認
+    // World B の完了を待機し、結果を取得 (String型を期待)
     println!("\n--- World B の状態確認 ---");
     println!("World B の現在の状態: {}", pw.progress("World_B").unwrap());
-    println!("World B の完了を待機中...");
-    match pw.status("World_B") {
-        Ok(_) => println!("World B が正常に完了しました。"),
+    match pw.status::<String>("World_B") { // status::<String>でString型を期待
+        Ok(result) => println!("World B が正常に完了しました。戻り値: \"{}\"", result),
         Err(e) => println!("World B の完了中にエラーが発生しました: {}", e),
     }
     println!("World B の最終状態: {}", pw.progress("World_B").unwrap());
 
-    // World C の状態を確認
+    // World C の完了を待機し、エラーを取得 (bool型を期待するが、失敗するのでErrが返る)
     println!("\n--- World C の状態確認 ---");
     println!("World C の現在の状態: {}", pw.progress("World_C").unwrap());
-    println!("World C の完了を待機中...");
-    match pw.status("World_C") {
-        Ok(_) => println!("World C が正常に完了しました。"),
+    match pw.status::<bool>("World_C") { // status::<bool>でbool型を期待
+        Ok(result) => println!("World C が正常に完了しました。戻り値: {}", result),
         Err(e) => println!("World C の完了中にエラーが発生しました: {}", e),
     }
     println!("World C の最終状態: {}", pw.progress("World_C").unwrap());
 
-    println!("\n--- アイドル状態のWorldを追加し、個別に実行・停止を試みます ---");
-    let world_d = World::from(|| {
-        println!("[World D] 開始: 200ms 処理します (停止可能)。");
-        for i in 0..10 {
-            sleep(Duration::from_millis(20));
-            // 本来はここで外部からの停止シグナルをチェックするが、今回は単純な例
-            println!("[World D] 処理中... {}", i);
-        }
-        println!("[World D] 自然に完了しました。");
-    });
-    pw.add("World_D".to_string(), world_d)
-        .expect("Failed to add World_D");
+    // World E の完了を待機し、結果を取得 (タプル型を期待)
+    println!("\n--- World E の状態確認 ---");
+    println!("World E の現在の状態: {}", pw.progress("World_E").unwrap());
+    type WorldEResult = (i32, i32); // タプル型にエイリアスを付けて可読性向上
+    match pw.status::<WorldEResult>("World_E") { // status::<WorldEResult>でタプル型を期待
+        Ok((sum, product)) => println!("World E が正常に完了しました。戻り値: 和={}, 積={}", sum, product),
+        Err(e) => println!("World E の完了中にエラーが発生しました: {}", e),
+    }
+    println!("World E の最終状態: {}", pw.progress("World_E").unwrap());
 
-    println!("World D を実行開始します。");
+    // World D: 協調的に停止できるタスク（再利用）
+    let stop_flag_d = Arc::new(Mutex::new(false));
+    let stop_flag_d_clone = Arc::clone(&stop_flag_d);
+
+    let world_d = World::from(move || {
+        println!("[World D] 開始: 20ms間隔で処理します (停止可能)。");
+        let mut i = 0;
+        loop {
+            if *stop_flag_d_clone.lock().unwrap() {
+                println!("[World D] 停止シグナルを受信しました。終了します。");
+                break i; // 停止した時点のiを返す
+            }
+            println!("[World D] 処理中... {}", i);
+            sleep(Duration::from_millis(20));
+            i += 1;
+            if i > 50 {
+                println!("[World D] 処理回数の上限に達しました。自然に完了します。");
+                break i;
+            }
+        }
+    });
+    pw.add("World_D".to_string(), world_d).expect("Failed to add World_D");
+
+    println!("\nWorld D を実行開始します。");
     pw.exec("World_D").expect("Failed to exec World_D");
     println!("World D の現在の状態: {}", pw.progress("World_D").unwrap());
 
     sleep(Duration::from_millis(50)); // 少し実行させる
 
-    println!("World D を停止します。");
-    pw.kill("World_D").expect("Failed to kill World_D"); // killはstopと同じ挙動
-    // stop/killメソッドはベストエフォートであり、タスクが協力的に終了しない限り、
-    // 即座に停止しない場合があることに注意してください。
-    // World Dのクロージャは外部からの停止シグナルをチェックしないため、自然に完了します。
+    println!("World D を停止シグナルで停止します。");
+    *stop_flag_d.lock().unwrap() = true; // 停止フラグを設定
 
-    // World Dが完了するのを待機（停止できたか、最後まで実行されたかを確認）
-    match pw.status("World_D") {
-        Ok(_) => println!("World D が正常に完了または停止しました。"),
+    println!("World D の完了を待機します。");
+    match pw.status::<i32>("World_D") { // World Dはi32を返す
+        Ok(count) => println!("World D が協調的に停止し、完了しました。カウント: {}", count),
         Err(e) => println!("World D の完了中にエラーが発生しました: {}", e),
     }
     println!("World D の最終状態: {}", pw.progress("World_D").unwrap());

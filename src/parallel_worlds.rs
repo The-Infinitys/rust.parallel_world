@@ -1,8 +1,7 @@
-// src/parallel_worlds.rs
-
+use crate::world::{AnyWorld, World, WorldStatus};
+use std::any::Any;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use crate::world::{World, WorldStatus}; // WorldとWorldStatusをインポート
 
 /// # ParallelWorlds
 ///
@@ -12,10 +11,9 @@ use crate::world::{World, WorldStatus}; // WorldとWorldStatusをインポート
 /// Pythonの`threading`モジュールのように、複数のタスクの開始、停止、状態監視を一元的に行えます。
 /// 各`World`は内部的に個別のスレッドで実行されます。
 pub struct ParallelWorlds {
-    /// ID（文字列）をキーとし、`World`インスタンスへの共有参照（`Arc<World>`）を値とする
-    /// ハッシュマップ。`Mutex`によってスレッドセーフにアクセスが保護されます。
-    worlds: Mutex<HashMap<String, Arc<World>>>,
-    // 将来的にスレッドプールを導入する可能性もありますが、現状では各Worldが独立したスレッドを持ちます。
+    /// WorldをID（String）で管理するHashMap。
+    /// 異なる戻り値の型を持つWorldを管理するため、`AnyWorld`トレイトオブジェクトを使用します。
+    worlds: Mutex<HashMap<String, Arc<dyn AnyWorld>>>,
 }
 
 impl ParallelWorlds {
@@ -37,37 +35,38 @@ impl ParallelWorlds {
     }
 
     /// `ParallelWorlds` に新しい `World` を追加します。
+    /// 同じIDのWorldが既に存在する場合はエラーを返します。
     ///
-    /// 指定された `id` が既に存在する場合、`Err` を返します。
+    /// # 型引数
+    /// * `R` - 追加するWorldが返す結果の型。
     ///
     /// # 引数
     /// * `id` - 追加するWorldの一意な識別子（String）。
-    /// * `world` - 追加する `World` インスタンス。
-    ///
-    /// # 戻り値
-    /// `Ok(())` - Worldが正常に追加された場合。
-    /// `Err(String)` - 同じIDのWorldが既に存在する場合、または内部エラーが発生した場合。
-    ///
-    /// # 例
+    /// * `world` - 追加する `World<R>` インスタ
     /// ```
     /// use parallel_world::{ParallelWorlds, World};
     ///
     /// let pw = ParallelWorlds::new();
-    /// let world1 = World::from(|| println!("Task 1"));
-    /// let world2 = World::from(|| println!("Task 2"));
+    /// let world1 = World::from(|| 1);
+    /// let world2 = World::from(|| "hello".to_string());
     ///
     /// assert!(pw.add("task_one".to_string(), world1).is_ok());
     /// assert!(pw.add("task_two".to_string(), world2).is_ok());
     ///
     /// // 同じIDを追加しようとするとエラー
-    /// let world_duplicate = World::new();
+    /// let world_duplicate: World<()> = World::new(); // 戻り値の型を明示
     /// assert!(pw.add("task_one".to_string(), world_duplicate).is_err());
     /// ```
-    pub fn add(&self, id: String, world: World) -> Result<(), String> {
+    pub fn add<R: Send + 'static + std::any::Any>(
+        &self,
+        id: String,
+        world: World<R>,
+    ) -> Result<(), String> {
         let mut worlds_guard = self.worlds.lock().unwrap();
         if worlds_guard.contains_key(&id) {
             return Err(format!("World with ID '{}' already exists.", id));
         }
+        // World<R>をArc<dyn AnyWorld>にダウンキャストして挿入
         worlds_guard.insert(id, Arc::new(world));
         Ok(())
     }
@@ -86,12 +85,12 @@ impl ParallelWorlds {
     ///
     /// # 例
     /// ```
-    /// use parallel_world::{ParallelWorlds, World};
+    /// use parallel_world::{ParallelWorlds, World, WorldStatus};
     /// use std::thread::sleep;
     /// use std::time::Duration;
     ///
     /// let pw = ParallelWorlds::new();
-    /// let world1 = World::from(|| { sleep(Duration::from_millis(100)); println!("Task 1 finished."); });
+    /// let world1 = World::from(|| { sleep(Duration::from_millis(100)); 1 });
     /// pw.add("task_one".to_string(), world1).unwrap();
     ///
     /// // 実行中のWorldは削除できない
@@ -99,7 +98,7 @@ impl ParallelWorlds {
     /// assert!(pw.del("task_one").is_err());
     ///
     /// // 停止または完了後に削除できる
-    /// pw.status("task_one").unwrap(); // 完了を待つ
+    /// pw.status::<i32>("task_one").unwrap(); // 完了を待つ
     /// assert!(pw.del("task_one").is_ok());
     /// assert!(pw.list().is_empty());
     ///
@@ -109,8 +108,11 @@ impl ParallelWorlds {
     pub fn del(&self, id: &str) -> Result<(), String> {
         let mut worlds_guard = self.worlds.lock().unwrap();
         if let Some(world) = worlds_guard.get(id) {
-            if world.progress() == WorldStatus::Running {
-                return Err(format!("Cannot delete running World with ID '{}'. Stop it first.", id));
+            if world.any_progress() == WorldStatus::Running {
+                return Err(format!(
+                    "Cannot delete running World with ID '{}'. Stop it first.",
+                    id
+                ));
             }
             worlds_guard.remove(id);
             Ok(())
@@ -119,7 +121,7 @@ impl ParallelWorlds {
         }
     }
 
-    /// `ParallelWorlds` に現在登録されているすべての `World` のIDリストを取得します。
+    /// `ParallelWorlds` に保存されたWorldのIDのリストを取得します。
     ///
     /// # 戻り値
     /// 現在登録されているWorldのID（`String`）のベクタ。
@@ -129,8 +131,8 @@ impl ParallelWorlds {
     /// use parallel_world::{ParallelWorlds, World};
     ///
     /// let pw = ParallelWorlds::new();
-    /// pw.add("alpha".to_string(), World::new()).unwrap();
-    /// pw.add("beta".to_string(), World::new()).unwrap();
+    /// pw.add("alpha".to_string(), World::from(|| ())).unwrap();
+    /// pw.add("beta".to_string(), World::from(|| ())).unwrap();
     ///
     /// let mut ids = pw.list();
     /// ids.sort(); // 順序を保証するためにソート
@@ -140,35 +142,11 @@ impl ParallelWorlds {
         self.worlds.lock().unwrap().keys().cloned().collect()
     }
 
-    /// 指定されたIDの `World` への共有参照（`Arc<World>`）を取得します。
-    ///
-    /// これにより、個々のWorldの状態を直接照会したり、操作したりできます。
-    ///
-    /// # 引数
-    /// * `id` - 取得するWorldの識別子。
-    ///
-    /// # 戻り値
-    /// `Some(Arc<World>)` - 指定されたIDのWorldが見つかった場合。
-    /// `None` - 指定されたIDのWorldが見つからない場合。
-    ///
-    /// # 例
-    /// ```
-    /// use parallel_world::{ParallelWorlds, World};
-    ///
-    /// let pw = ParallelWorlds::new();
-    /// let world1 = World::new();
-    /// pw.add("my_world".to_string(), world1).unwrap();
-    ///
-    /// let retrieved_world = pw.get("my_world").unwrap();
-    /// // retrieved_world を介して World のメソッドを呼び出すことができる
-    /// assert_eq!(retrieved_world.progress().to_string(), "Ready");
-    ///
-    /// assert!(pw.get("non_existent").is_none());
-    /// ```
-    pub fn get(&self, id: &str) -> Option<Arc<World>> {
+    /// `ParallelWorlds`からWorldを検索し、`Arc<dyn AnyWorld>`参照を返します。
+    /// 特定の型の戻り値を持つWorldを取得したい場合は、この参照をダウンキャストする必要があります。
+    pub fn get(&self, id: &str) -> Option<Arc<dyn AnyWorld>> {
         self.worlds.lock().unwrap().get(id).cloned()
     }
-
 
     /// 登録されているすべての `World` のうち、状態が `Ready` のものを一括で実行開始します。
     ///
@@ -182,8 +160,8 @@ impl ParallelWorlds {
     /// use std::time::Duration;
     ///
     /// let pw = ParallelWorlds::new();
-    /// pw.add("task_a".to_string(), World::from(|| { println!("Task A running..."); sleep(Duration::from_millis(50)); })).unwrap();
-    /// pw.add("task_b".to_string(), World::from(|| { println!("Task B running..."); sleep(Duration::from_millis(100)); })).unwrap();
+    /// pw.add("task_a".to_string(), World::from(|| { println!("Task A running..."); sleep(Duration::from_millis(50)); 1 })).unwrap();
+    /// pw.add("task_b".to_string(), World::from(|| { println!("Task B running..."); sleep(Duration::from_millis(100)); "done".to_string() })).unwrap();
     ///
     /// pw.start_all();
     ///
@@ -192,31 +170,24 @@ impl ParallelWorlds {
     /// assert_eq!(pw.progress("task_a").unwrap(), WorldStatus::Running);
     /// assert_eq!(pw.progress("task_b").unwrap(), WorldStatus::Running);
     ///
-    /// pw.status("task_a").unwrap(); // 完了を待つ
-    /// pw.status("task_b").unwrap(); // 完了を待つ
+    /// pw.status::<i32>("task_a").unwrap(); // 完了を待つ
+    /// pw.status::<String>("task_b").unwrap(); // 完了を待つ
     /// assert_eq!(pw.progress("task_a").unwrap(), WorldStatus::Finished);
     /// assert_eq!(pw.progress("task_b").unwrap(), WorldStatus::Finished);
     /// ```
     pub fn start_all(&self) {
         let worlds_guard = self.worlds.lock().unwrap();
         for (_, world) in worlds_guard.iter() {
-            if world.progress() == WorldStatus::Ready {
-                let _ = world.start(); // エラーは無視（個々のWorldのログで対応）
+            if world.any_progress() == WorldStatus::Ready {
+                let _ = world.any_start(); // エラーは無視（個々のWorldのログで対応）
             }
         }
     }
 
-    /// 指定されたIDの `World` を実行開始します。
+    /// 特定のWorldを実行開始します。
     ///
-    /// このメソッドは新しいスレッドを生成し、すぐに制御を返します。
-    /// `World` の実行完了を待つには、`status` メソッドを使用します。
-    ///
-    /// # 引数
-    /// * `id` - 実行開始するWorldの識別子。
-    ///
-    /// # 戻り値
-    /// `Ok(())` - Worldが正常に実行開始された場合。
-    /// `Err(String)` - 指定されたIDのWorldが見つからない場合、またはWorldが既に実行中の場合。
+    /// # Errors
+    /// Worldが見つからない、または既に実行中の場合にエラーを返します。
     ///
     /// # 例
     /// ```
@@ -225,93 +196,58 @@ impl ParallelWorlds {
     /// use std::time::Duration;
     ///
     /// let pw = ParallelWorlds::new();
-    /// pw.add("my_task".to_string(), World::from(|| { println!("Task running..."); sleep(Duration::from_millis(50)); })).unwrap();
+    /// pw.add("my_task".to_string(), World::from(|| { println!("Task running..."); sleep(Duration::from_millis(50)); 42 })).unwrap();
     ///
     /// assert_eq!(pw.progress("my_task").unwrap(), WorldStatus::Ready);
     ///
     /// assert!(pw.exec("my_task").is_ok());
     /// assert_eq!(pw.progress("my_task").unwrap(), WorldStatus::Running);
     ///
-    /// // 既に実行中のWorldを実行開始しようとするとエラー
+    /// // 既に実行中のWorldを再度開始しようとするとエラー
     /// assert!(pw.exec("my_task").is_err());
     ///
-    /// pw.status("my_task").unwrap(); // 完了を待つ
+    /// pw.status::<i32>("my_task").unwrap(); // 完了を待つ
     /// assert_eq!(pw.progress("my_task").unwrap(), WorldStatus::Finished);
     /// ```
     pub fn exec(&self, id: &str) -> Result<(), String> {
         if let Some(world) = self.get(id) {
-            world.start()
+            world.any_start()
         } else {
             Err(format!("World with ID '{}' not found.", id))
         }
     }
 
-    /// 登録されているすべての実行中の `World` を停止しようと試みます。
-    ///
-    /// このメソッドは、各Worldの`stop()`メソッドを呼び出します。
-    /// `stop()`メソッドはスレッドを強制終了するものではなく、Worldが協力して停止するように
-    /// シグナルを送るベストエフォートな試みであることに注意してください。
-    /// Worldが実際に停止したことを確認するには、`progress()`メソッドで状態を監視してください。
-    ///
-    /// # 例
-    /// ```
-    /// use parallel_world::{ParallelWorlds, World, WorldStatus};
-    /// use std::thread::sleep;
-    /// use std::time::Duration;
-    ///
-    /// let pw = ParallelWorlds::new();
-    /// pw.add("long_task_1".to_string(), World::from(|| {
-    ///     for i in 0..10 { sleep(Duration::from_millis(100)); println!("Long task 1: {}", i); }
-    /// })).unwrap();
-    /// pw.add("long_task_2".to_string(), World::from(|| {
-    ///     for i in 0..10 { sleep(Duration::from_millis(150)); println!("Long task 2: {}", i); }
-    /// })).unwrap();
-    ///
-    /// pw.start_all();
-    /// sleep(Duration::from_millis(200)); // 少し実行させる
-    ///
-    /// println!("Attempting to stop all worlds...");
-    /// pw.stop_all();
-    ///
-    /// // 停止の試み後、状態がStoppedになっていることを期待（実際の停止はWorldの実装による）
-    /// sleep(Duration::from_millis(50)); // 状態更新を待つ
-    /// let s1 = pw.progress("long_task_1").unwrap();
-    /// let s2 = pw.progress("long_task_2").unwrap();
-    /// assert!(s1 == WorldStatus::Stopped || s1 == WorldStatus::Running);
-    /// assert!(s2 == WorldStatus::Stopped || s2 == WorldStatus::Running);
-    /// ```
+    /// すべての実行中のWorldを停止します。
     pub fn stop_all(&self) {
         let worlds_guard = self.worlds.lock().unwrap();
         for (_, world) in worlds_guard.iter() {
-            if world.progress() == WorldStatus::Running {
-                let _ = world.stop(); // エラーは無視
+            if world.any_progress() == WorldStatus::Running {
+                let _ = world.any_stop(); // エラーは無視
             }
         }
     }
 
-    /// 指定されたIDの `World` を停止しようと試みます。
+    /// 特定のWorldを停止します。
     ///
-    /// このメソッドは、対象のWorldの`stop()`メソッドを呼び出します。
-    /// `stop()`メソッドはスレッドを強制終了するものではなく、Worldが協力して停止するように
-    /// シグナルを送るベストエフォートな試みであることに注意してください。
-    /// Worldが実際に停止したことを確認するには、`progress()`メソッドで状態を監視してください。
-    ///
-    /// # 引数
-    /// * `id` - 停止するWorldの識別子。
-    ///
-    /// # 戻り値
-    /// `Ok(())` - 停止の試みが正常に行われた場合。
-    /// `Err(String)` - 指定されたIDのWorldが見つからない場合、またはWorldが実行中でない場合。
+    /// # Errors
+    /// Worldが見つからない、または実行中でない場合にエラーを返します。
     ///
     /// # 例
     /// ```
     /// use parallel_world::{ParallelWorlds, World, WorldStatus};
     /// use std::thread::sleep;
     /// use std::time::Duration;
+    /// use std::sync::{Arc, Mutex};
     ///
     /// let pw = ParallelWorlds::new();
-    /// pw.add("my_long_task".to_string(), World::from(|| {
-    ///     for i in 0..10 { sleep(Duration::from_millis(100)); println!("My long task: {}", i); }
+    /// let stop_flag = Arc::new(Mutex::new(false));
+    /// let flag_clone = Arc::clone(&stop_flag);
+    /// pw.add("my_long_task".to_string(), World::from(move || {
+    ///     for i in 0..10 {
+    ///         if *flag_clone.lock().unwrap() { break 0; } // 協調的に停止
+    ///         sleep(Duration::from_millis(100)); println!("My long task: {}", i);
+    ///     }
+    ///     0
     /// })).unwrap();
     ///
     /// pw.exec("my_long_task").unwrap();
@@ -320,34 +256,29 @@ impl ParallelWorlds {
     /// assert_eq!(pw.progress("my_long_task").unwrap(), WorldStatus::Running);
     ///
     /// println!("Attempting to kill my_long_task...");
-    /// assert!(pw.kill("my_long_task").is_ok());
+    /// *stop_flag.lock().unwrap() = true; // 停止フラグをセット
+    /// pw.kill("my_long_task").unwrap(); // stopを呼び出す
     ///
     /// sleep(Duration::from_millis(50)); // 状態更新を待つ
+    /// // ここでstoppedになることを期待するが、協調的停止の場合はFinishedになる可能性も
     /// let status = pw.progress("my_long_task").unwrap();
-    /// assert!(status == WorldStatus::Stopped || status == WorldStatus::Running);
+    /// assert!(status == WorldStatus::Stopped || status == WorldStatus::Finished);
     ///
     /// // 存在しないWorldのkillはエラー
     /// assert!(pw.kill("non_existent_task").is_err());
     /// ```
     pub fn kill(&self, id: &str) -> Result<(), String> {
         if let Some(world) = self.get(id) {
-            // killはstopよりも強制的な停止を意図するかもしれませんが、
-            // std::threadの制約から、ここではstopと同じ処理とします。
-            // 実際の強制終了は、より高度なプロセス管理（OSレベル）が必要になるでしょう。
-            world.stop()
+            world.any_stop()
         } else {
             Err(format!("World with ID '{}' not found.", id))
         }
     }
 
-    /// 指定されたIDの `World` の現在の実行状態を取得します。
+    /// 指定されたWorldの実行状態を取得します。
     ///
-    /// # 引数
-    /// * `id` - 状態を取得するWorldの識別子。
-    ///
-    /// # 戻り値
-    /// `Ok(WorldStatus)` - 指定されたIDのWorldが見つかった場合、その現在の状態を返します。
-    /// `Err(String)` - 指定されたIDのWorldが見つからない場合。
+    /// # Errors
+    /// Worldが見つからない場合にエラーを返します。
     ///
     /// # 例
     /// ```
@@ -356,37 +287,51 @@ impl ParallelWorlds {
     /// use std::time::Duration;
     ///
     /// let pw = ParallelWorlds::new();
-    /// pw.add("my_task".to_string(), World::from(|| sleep(Duration::from_millis(50)))).unwrap();
+    /// pw.add("my_task".to_string(), World::from(|| { sleep(Duration::from_millis(20)); 123 })).unwrap();
     ///
     /// assert_eq!(pw.progress("my_task").unwrap(), WorldStatus::Ready);
     /// pw.exec("my_task").unwrap();
     /// assert_eq!(pw.progress("my_task").unwrap(), WorldStatus::Running);
     ///
-    /// pw.status("my_task").unwrap(); // 完了を待つ
+    /// pw.status::<i32>("my_task").unwrap(); // 完了を待つ
     /// assert_eq!(pw.progress("my_task").unwrap(), WorldStatus::Finished);
     ///
     /// assert!(pw.progress("non_existent_task").is_err());
     /// ```
     pub fn progress(&self, id: &str) -> Result<WorldStatus, String> {
         if let Some(world) = self.get(id) {
-            Ok(world.progress())
+            Ok(world.any_progress())
         } else {
             Err(format!("World with ID '{}' not found.", id))
         }
     }
 
-    /// 指定されたIDの `World` の実行終了を待機し、その最終結果を返します。
+    /// 指定されたWorldの実行終了を待機し、その結果（`Box<dyn Any + Send>`）を返します。
     ///
-    /// このメソッドは、対象のWorldが完了するまで現在のスレッドをブロックします。
-    /// パニックなどによりWorldが失敗した場合、`Err`を返します。
+    /// このメソッドは、タスクが完了するまでブロックします。
+    /// 戻り値の型は`Box<dyn Any + Send>`となるため、呼び出し側で元の型にダウンキャストする必要があります。
     ///
-    /// # 引数
-    /// * `id` - 実行終了を待機するWorldの識別子。
+    /// # Errors
+    /// Worldが見つからない、タスクが失敗した、または結果のダウンキャストに失敗した場合にエラーを返します。
+    pub fn status_any(&self, id: &str) -> Result<Box<dyn Any + Send>, String> {
+        if let Some(world) = self.get(id) {
+            world.any_status()
+        } else {
+            Err(format!("World with ID '{}' not found.", id))
+        }
+    }
+
+    /// 指定されたWorldの実行終了を待機し、期待される型の結果を返します。
     ///
-    /// # 戻り値
-    /// `Ok(())` - Worldが正常に実行を完了した場合。
-    /// `Err(String)` - Worldがパニックまたはその他の理由で失敗した場合、
-    /// または指定されたIDのWorldが見つからない場合。
+    /// このメソッドは、タスクが完了するまでブロックします。
+    /// 結果は自動的に`T`型にダウンキャストされます。
+    /// ダウンキャストに失敗した場合（期待する型と実際の型が異なる場合）、エラーを返します。
+    ///
+    /// # 型引数
+    /// * `T` - 期待される戻り値の型。
+    ///
+    /// # エラー
+    /// Worldが見つからない、タスクが失敗した、または結果のダウンキャストに失敗した場合にエラーを返します。
     ///
     /// # 例
     /// ```
@@ -396,48 +341,53 @@ impl ParallelWorlds {
     ///
     /// let pw = ParallelWorlds::new();
     ///
-    /// // 成功するタスク
-    /// pw.add("success_task".to_string(), World::from(|| {
-    ///     println!("Success task running...");
+    /// // 整数を返すタスク
+    /// pw.add("sum_task".to_string(), World::from(|| {
     ///     sleep(Duration::from_millis(50));
-    ///     println!("Success task done.");
+    ///     10 + 20
     /// })).unwrap();
-    /// pw.exec("success_task").unwrap();
-    /// assert!(pw.status("success_task").is_ok());
+    /// pw.exec("sum_task").unwrap();
+    /// let sum_result: Result<i32, String> = pw.status("sum_task");
+    /// assert!(sum_result.is_ok());
+    /// assert_eq!(sum_result.unwrap(), 30);
+    ///
+    /// // 文字列を返すタスク
+    /// pw.add("message_task".to_string(), World::from(|| {
+    ///     sleep(Duration::from_millis(30));
+    ///     "Task finished!".to_string()
+    /// })).unwrap();
+    /// pw.exec("message_task").unwrap();
+    /// let msg_result: Result<String, String> = pw.status("message_task");
+    /// assert!(msg_result.is_ok());
+    /// assert_eq!(msg_result.unwrap(), "Task finished!".to_string());
     ///
     /// // 失敗するタスク
     /// pw.add("fail_task".to_string(), World::from(|| {
-    ///     println!("Fail task running...");
-    ///     sleep(Duration::from_millis(10));
-    ///     panic!("Oh no!");
+    ///     panic!("Intentional error!");
+    ///     0 // ダミーの戻り値
     /// })).unwrap();
     /// pw.exec("fail_task").unwrap();
-    /// assert!(pw.status("fail_task").is_err());
+    /// let fail_result: Result<i32, String> = pw.status("fail_task");
+    /// assert!(fail_result.is_err());
+    /// println!("Fail task error: {}", fail_result.unwrap_err());
     ///
     /// // 存在しないWorldのstatusはエラー
-    /// assert!(pw.status("non_existent_task").is_err());
+    /// assert!(pw.status::<()>("non_existent_task").is_err());
     /// ```
-    pub fn status(&self, id: &str) -> Result<(), String> {
-        if let Some(world) = self.get(id) {
-            world.status()
-        } else {
-            Err(format!("World with ID '{}' not found.", id))
-        }
+    pub fn status<T: Send + 'static + std::any::Any>(&self, id: &str) -> Result<T, String> {
+        self.status_any(id)? // まずAnyWorldトレイトオブジェクトとして結果を取得
+            .downcast::<T>() // T型にダウンキャストを試みる
+            .map(|b| *b) // BoxからTを取り出す
+            .map_err(|_| {
+                format!(
+                    "Failed to downcast result for World '{}' to expected type.",
+                    id
+                )
+            })
     }
 }
 
 impl Default for ParallelWorlds {
-    /// `ParallelWorlds::new()` と同じ結果を返します。
-    ///
-    /// `Default::default()` で `ParallelWorlds` のインスタンスを生成できます。
-    ///
-    /// # 例
-    /// ```
-    /// use parallel_world::ParallelWorlds;
-    ///
-    /// let pw = ParallelWorlds::default();
-    /// assert!(pw.list().is_empty());
-    /// ```
     fn default() -> Self {
         Self::new()
     }
