@@ -1,8 +1,8 @@
+use std::any::Any;
 use std::fmt;
 use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread::{self, JoinHandle};
-use std::any::Any;
 
 /// Worldの実行状態を表す列挙型
 #[derive(Debug, Clone, PartialEq)]
@@ -64,6 +64,12 @@ pub struct World<R: Send + 'static> {
     result_sender: Mutex<Option<mpsc::Sender<Result<R, String>>>>,
     /// タスクの実行結果を受信するためのチャネルの受信側。
     result_receiver: Arc<Mutex<Option<mpsc::Receiver<Result<R, String>>>>>,
+}
+
+impl<R: Send + 'static> Default for World<R> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<R: Send + 'static> World<R> {
@@ -196,15 +202,18 @@ impl<R: Send + 'static> World<R> {
     /// assert_eq!(world.progress(), WorldStatus::Finished);
     /// ```
     pub fn start(&self) -> Result<(), String> {
-        let mut status_guard = self.status.lock().unwrap();
+        let status_guard = self.status.lock().unwrap();
         // === ここを変更 ===
         if *status_guard == WorldStatus::Running {
             return Err("World is already running.".to_string());
         }
         // `matches!` マクロを使用して WorldStatus::Failed(_) をチェック
-        if *status_guard == WorldStatus::Finished || matches!(*status_guard, WorldStatus::Failed(_)) {
+        if *status_guard == WorldStatus::Finished || matches!(*status_guard, WorldStatus::Failed(_))
+        {
             // 完了済みまたは失敗済みのWorldを再実行しようとした場合
-            return Err("World has already completed or failed and cannot be restarted.".to_string());
+            return Err(
+                "World has already completed or failed and cannot be restarted.".to_string(),
+            );
         }
         // === 変更ここまで ===
 
@@ -221,13 +230,12 @@ impl<R: Send + 'static> World<R> {
             }
             let result_sender = result_sender_opt.unwrap();
 
-
             let handle = thread::spawn(move || {
                 let mut s = status_clone.lock().unwrap();
                 *s = WorldStatus::Running;
                 drop(s); // ロックを早期に解放
 
-                let result = match std::panic::catch_unwind(AssertUnwindSafe(move || process_fn())) {
+                let result = match std::panic::catch_unwind(AssertUnwindSafe(process_fn)) {
                     Ok(val) => {
                         let mut s = status_clone.lock().unwrap();
                         *s = WorldStatus::Finished;
@@ -359,7 +367,9 @@ impl<R: Send + 'static> World<R> {
         if let Some(handle) = handle_guard.take() {
             // スレッドが完了するまで待機
             // ここでスレッドがパニックした場合、Errが返る
-            handle.join().map_err(|e| format!("Thread panicked: {:?}", e))?;
+            handle
+                .join()
+                .map_err(|e| format!("Thread panicked: {:?}", e))?;
         }
 
         // スレッドが終了した後、チャネルから結果を受け取る
@@ -371,11 +381,20 @@ impl<R: Send + 'static> World<R> {
                     // 送信側がドロップされたか、メッセージが送信されなかった場合
                     let current_status = self.status.lock().unwrap().clone();
                     match current_status {
-                        WorldStatus::Finished => Err("World finished but result not sent (internal error).".to_string()),
+                        WorldStatus::Finished => {
+                            Err("World finished but result not sent (internal error).".to_string())
+                        }
                         WorldStatus::Failed(e) => Err(e),
-                        WorldStatus::Stopped => Err("World was stopped before completion.".to_string()),
-                        WorldStatus::Killed => Err("World was killed before completion.".to_string()),
-                        _ => Err(format!("World ended with unexpected status and no result: {}", current_status)),
+                        WorldStatus::Stopped => {
+                            Err("World was stopped before completion.".to_string())
+                        }
+                        WorldStatus::Killed => {
+                            Err("World was killed before completion.".to_string())
+                        }
+                        _ => Err(format!(
+                            "World ended with unexpected status and no result: {}",
+                            current_status
+                        )),
                     }
                 }
             }
@@ -385,7 +404,10 @@ impl<R: Send + 'static> World<R> {
             match current_status {
                 WorldStatus::Finished => Err("World result already retrieved.".to_string()),
                 WorldStatus::Failed(e) => Err(e),
-                _ => Err(format!("World result not available for status: {}", current_status)),
+                _ => Err(format!(
+                    "World result not available for status: {}",
+                    current_status
+                )),
             }
         }
     }
